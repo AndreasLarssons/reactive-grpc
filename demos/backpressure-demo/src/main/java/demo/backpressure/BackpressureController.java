@@ -43,18 +43,42 @@ public class BackpressureController extends RxBackpressureDemoGrpc.BackpressureD
     /**
      * Slowly request numbers
      */
+//    @FXML
+//    public void startBackpressure(ActionEvent actionEvent) {
+//        resetGraph();
+//        Single.just(5000)
+//                // Construct request
+//                .map(i -> NumbersProto.HowMany.newBuilder().setNumber(i).build())
+//                // Call service
+//                .as(stub::sendNumbers)
+//                // Parse response
+//                .map(i -> i.getNumber(0))
+//                // Introduce a synthetic three millisecond delay per read
+//                .zipWith(Flowable.interval(3, TimeUnit.MILLISECONDS), (item, interval) -> item)
+//                // Transition processing to UI thread
+//                .observeOn(JavaFxScheduler.platform())
+//                // Execute
+//                .subscribe(
+//                        i -> {
+//                            consumedLabel.setText(i.toString());
+//                            consumedSeries.getData().add(new XYChart.Data<>(System.currentTimeMillis(), i));
+//                        },
+//                        Throwable::printStackTrace,
+//                        () -> startButton.setDisable(false)
+//                );
+//    }
+
     @FXML
     public void startBackpressure(ActionEvent actionEvent) {
         resetGraph();
-        Single.just(5000)
-                // Construct request
-                .map(i -> NumbersProto.HowMany.newBuilder().setNumber(i).build())
-                // Call service
-                .as(stub::sendNumbers)
+        Flowable.range(0,5000)
+                .map(BackpressureController::howManyNum)
+                .flatMapSingle(stub::sendNumber)
                 // Parse response
                 .map(i -> i.getNumber(0))
+                .onBackpressureBuffer()
                 // Introduce a synthetic three millisecond delay per read
-                .zipWith(Flowable.interval(3, TimeUnit.MILLISECONDS), (item, interval) -> item)
+//                .zipWith(Flowable.interval(3, TimeUnit.MILLISECONDS), (item, interval) -> item)
                 // Transition processing to UI thread
                 .observeOn(JavaFxScheduler.platform())
                 // Execute
@@ -62,13 +86,12 @@ public class BackpressureController extends RxBackpressureDemoGrpc.BackpressureD
                         i -> {
                             consumedLabel.setText(i.toString());
                             consumedSeries.getData().add(new XYChart.Data<>(System.currentTimeMillis(), i));
+                            Thread.sleep(3);
                         },
                         Throwable::printStackTrace,
                         () -> startButton.setDisable(false)
                 );
     }
-
-
 
 
     /**
@@ -79,7 +102,7 @@ public class BackpressureController extends RxBackpressureDemoGrpc.BackpressureD
         // Fork the response flowable using share()
         Flowable<Integer> numbers = request
                 // Extract request
-                .map(NumbersProto.HowMany::getNumber)
+                .map(r -> r.getNumber(0))
                 // Process request
                 .flatMapPublisher(i -> Flowable.range(0, i))
                 .share();
@@ -95,8 +118,26 @@ public class BackpressureController extends RxBackpressureDemoGrpc.BackpressureD
         return numbers.map(BackpressureController::protoNum);
     }
 
+    @Override
+    public Single<NumbersProto.Number> sendNumber(Single<NumbersProto.HowMany> request) {
+        // Fork the response flowable using share()
+        Flowable<Integer> numbers = request
+                // Extract request
+                .map(r -> r.getNumber(0))
+                // Process request
+                .toFlowable()
+                .share();
 
+        // One fork updates the UI
+        numbers.observeOn(JavaFxScheduler.platform())
+                .subscribe(i -> {
+                    producedLabel.setText(i.toString());
+                    producedSeries.getData().add(new XYChart.Data<>(System.currentTimeMillis(), i));
+                });
 
+        // Other fork returns the number stream
+        return numbers.map(BackpressureController::protoNum).firstOrError();
+    }
 
     @FXML
     public void initialize() throws Exception {
@@ -108,6 +149,12 @@ public class BackpressureController extends RxBackpressureDemoGrpc.BackpressureD
         consumedSeries.setName("Consumed");
         lineChart.getData().add(producedSeries);
         lineChart.getData().add(consumedSeries);
+    }
+
+    private static NumbersProto.HowMany howManyNum(int i) {
+        Integer[] ints = new Integer[1024];
+        Arrays.fill(ints, i);
+        return NumbersProto.HowMany.newBuilder().addAllNumber(Arrays.asList(ints)).build();
     }
 
     private static NumbersProto.Number protoNum(int i) {

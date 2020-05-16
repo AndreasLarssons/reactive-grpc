@@ -9,10 +9,11 @@ import "google/protobuf/empty.proto";
 
 service BackpressureDemo {
     rpc SendNumbers (HowMany) returns (stream Number) {}
+    rpc SendNumber (HowMany) returns (Number) {}
 }
 
 message HowMany {
-    int32 number = 1;
+    repeated int32 number = 1;
 }
 
 message Number {
